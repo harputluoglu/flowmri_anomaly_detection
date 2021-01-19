@@ -1,0 +1,71 @@
+# =================================== DIRECTORY SETTINGS ===================================
+
+project_code_root: '/scratch_net/biwidl210/peifferp/thesis/master-thesis'
+project_data_root: '/scratch_net/biwidl210/peifferp/thesis/freiburg_data/processed_data'
+data_index: /scratch_net/bmicdl01/Data/camcan_train.hdf5
+train_set_name: camcan_train_set
+val_set_name: camcan_val_set
+log_dir: ./logs
+
+# Which model should be loaded
+model_name: 'Masked_Sliced_VAE_2000EP_augmented'
+model_directory: 'logs/Masked_Sliced_VAE_2000EP_augmented_20200405-221109/Masked_Sliced_VAE_2000EP_augmented'
+latest_model_epoch: 2000
+
+# Should we save an hdf5 file of all the reconstructions?
+save_hdf5: True
+
+# =================================== NETWORK SETTINGS ===================================
+batch_size: 8
+
+spatial_size_x: 32
+spatial_size_y: 32
+spatial_size_z: 64
+spatial_size_t: 48
+
+latent_x: 2
+latent_y: 2
+latent_t: 3
+
+lr: 5.0e-5
+lr_decay_begin: 100
+lr_decay_end: 500
+log_freq: 250
+ckpt_freq: 1000
+test_freq: 1000
+drop_prob: 0.1
+
+
+# =================================== EVALUATION SETTINGS =================================
+
+# Training data
+train_data_start_idx: 0
+train_data_end_idx: 19
+
+# Validation/ Test data
+validation_data_start_idx: 20
+validation_data_end_idx: 26
+
+# Evaluation on which datasets
+which_datasets: ['train', 'validation']
+
+# Which subjects from each dataset,
+# default is all subjects, custom will pick subjects from array
+subject_mode: 'all' #set to custom and choose below
+subjects_train: []
+subjects_validation: []
+
+# Which slices, default is evaluated for all slices, custom will pick slices
+slice_mode: 'all' #set to custom and choose below, this is currently not a finished feature as of 10/02/2020
+which_slices: []
+
+# Visualization options below
+visualization_mode: 'all' # create more options here in a bit, for now either all or something else to disable completely
+
+# Below are the options for adding noise and dice score computation
+generate_noise: true # when set to false no artificial noise is generated
+
+noise_subjects_train: [3] # on which subjects from train set should be added noise to
+noise_subjects_validation: [0,1,2,3,4,5] # on which subjects from validation set should be added noise to
+
+dice_score_thresholds: [0., 0.005, 0.01, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9] # iterate over different threshold for dice score computation

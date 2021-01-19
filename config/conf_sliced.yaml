@@ -1,0 +1,72 @@
+# =================================== DIRECTORY SETTINGS ===================================
+
+project_code_root: '/scratch_net/biwidl210/peifferp/thesis/master-thesis'
+project_data_root: '/scratch_net/biwidl210/peifferp/thesis/freiburg_data/processed_data'
+data_index: /scratch_net/bmicdl01/Data/camcan_train.hdf5
+train_set_name: camcan_train_set
+val_set_name: camcan_val_set
+log_dir: ./logs
+
+
+# Which model should be loaded
+model_name: 'Masked_Sliced_VAE_2000EP_augmented'
+model_directory: 'logs/Masked_Sliced_VAE_2000EP_augmented_20200303-145449/Masked_Sliced_VAE_2000EP_augmented'
+latest_model_epoch: 1220
+
+
+# =================================== TRAINING SETTINGS ===================================
+batch_size: 8
+
+spatial_size_x: 32
+spatial_size_y: 32
+spatial_size_z: 64
+spatial_size_t: 48
+
+latent_x: 2
+latent_y: 2
+latent_t: 3
+
+do_data_augmentation: True
+
+
+box_factor: 0
+bottleneck_factor: 0
+z_dim: 2888
+
+lr: 5.0e-5
+lr_decay_begin: 100
+lr_decay_end: 2010
+log_freq: 250
+ckpt_freq: 1000
+test_freq: 1000
+drop_prob: 0.1
+
+
+# =================================== LOGGING SETTINGS ===================================
+validation_frequency: 10
+
+# =================================== OTHERS ===============================================
+
+feature_layers: [
+    "input_1",
+    "block1_conv2",
+    "block2_conv2",
+    "block3_conv4",
+    "block4_conv4",
+    "block5_conv4"]
+
+feature_weights: [
+   1.0,
+   0.0,
+   1.0,
+   1.0,
+   1.0,
+   1.0]
+
+gram_weights: [
+   0.0,
+   0.,
+   0.,
+   0.,
+   0.,
+   0.]
