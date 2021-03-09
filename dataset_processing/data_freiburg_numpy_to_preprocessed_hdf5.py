@@ -17,7 +17,16 @@ from scipy import interpolate
 from matplotlib import pyplot as plt
 from skimage.morphology import skeletonize_3d, binary_dilation, dilation, cube
 
-
+# ========================================================
+# Adding io interface developed by cscs
+# The method used in segmenter is preserved to find the path:
+# Adding the path of the hpc-predict-io/python/ directory to sys.path
+# ========================================================
+import os, sys
+current_dir_path = os.getcwd()
+mr_io_dir_path = current_dir_path[:-44] + 'hpc-predict-io/python/'
+sys.path.append(mr_io_dir_path)
+from mr_io import SegmentedFlowMRI
 
 # ==========================================
 # function to normalize the input arrays (intensity and velocity) to a range between 0 to 1.
@@ -822,7 +831,7 @@ def load_masked_data(basepath,
 def prepare_and_write_masked_data_sliced(basepath,
                            filepath_output,
                            subject_index,
-                           train_test,
+                           validation_dir,
                            load_anomalous=False):
 
     # ==========================================
@@ -856,27 +865,50 @@ def prepare_and_write_masked_data_sliced(basepath,
     # ==========================================
     # write each subject's image and label data in the hdf5 file
     # ==========================================
-    dataset['sliced_images_%s' % train_test] = hdf5_file.create_dataset("sliced_images_%s" % train_test, images_dataset_shape, dtype='float32')
+    dataset['sliced_images_%s' % validation_dir] = hdf5_file.create_dataset("sliced_images_%s" % validation_dir, images_dataset_shape, dtype='float32')
     #dataset['labels_%s' % train_test] = hdf5_file.create_dataset("labels_%s" % train_test, labels_dataset_shape, dtype='uint8')
-
+    ''' 
     # load the segmentation that was created with Nicolas's tool
     if load_anomalous:
         image = np.load(basepath + '/' + 'anomalous_subject' + '/image.npy')
         segmented_original = np.load(basepath + '/' + 'anomalous_subject' + '/random_walker_prediction.npy')
     else:
+        #This part is changed to adapt hpc-predict-io. Ask this ordering to Neerav.
         image = np.load(basepath + '/' + subjects_ordering.SUBJECT_DIRS[subject_index] + '/image.npy')
         segmented_original = np.load(basepath + '/' + subjects_ordering.SUBJECT_DIRS[subject_index] + '/random_walker_prediction.npy')
 
+    print('image.shape: ')
+    print(image.shape)
+    print('segmented_original:')
+    print(segmented_original.shape)
+    #HCP-PREDICT-IO as following:
+    '''     
+    segmentedFlowMRI= SegmentedFlowMRI.read_hdf5('/scratch/hharputlu/download.hdf5')
+
+    image_intensity = segmentedFlowMRI.intensity
+    image_velocity= segmentedFlowMRI.velocity_mean
+    image_intensity_reshaped = image_intensity.reshape(image_intensity.shape[0], image_intensity.shape[1], image_intensity.shape[2], image_intensity.shape[3], 1)
+        
+    #image velocity and intensity should be combined together so that last dimension will be equal to 4.
+    image = np.concatenate((image_intensity_reshaped, image_velocity), axis = 4)
+    logging.info('Image_intensity_reshaped: {} Image_velocity: {} Image: {} '.format(image_intensity_reshaped.shape, image_velocity.shape, image.shape)) 
+    
+    segmented_original = segmentedFlowMRI.segmentation_prob
+    logging.info('Segmented_original: {} '.format(segmented_original.shape))
+    
+    
     # Enlarge the segmentation slightly to be sure that there are no cutoffs of the aorta
     time_steps = segmented_original.shape[3]
     segmented = dilation(segmented_original[:,:,:,7], cube(3))
-
+    print('segmented')
+    print(segmented)
     temp_for_stack = [segmented for i in range(time_steps)]
     segmented = np.stack(temp_for_stack, axis=3)
-
+    print('segmented after stacking:')
+    print(segmented)
     # normalize image to -1 to 1
     image = normalize_image(image)
-
+    print(image)
     temp_images_intensity = image[:,:,:,:,0] * segmented # change these back if it works
     temp_images_vx = image[:,:,:,:,1] * segmented
     temp_images_vy = image[:,:,:,:,2] * segmented
@@ -888,10 +920,14 @@ def prepare_and_write_masked_data_sliced(basepath,
 
     # Average the segmentation over time (the geometry should be the same over time)
     avg = np.average(segmented_original, axis = 3)
-
+    print('avg')
+    print(avg.shape)
+    print(avg)
+    
     # Compute the centerline points of the skeleton
-    skeleton = skeletonize_3d(avg[:,:,:])
-
+    skeleton = skeletonize_3d(avg[:,:, :])
+    print('skeleton')
+    print(skeleton)
     # Get the points of the centerline as an array
     points = np.array(np.where(skeleton != 0)).transpose([1,0])
 
@@ -938,12 +974,25 @@ def prepare_and_write_masked_data_sliced(basepath,
     # move the z-axis to the front, as we want to stack the data along this axis
     image_out = np.moveaxis(image_out, 2, 0)
 
-    # add the image to the hdf5 file
-    dataset['sliced_images_%s' % train_test][subject_index*end_shape[2]:(subject_index+1)*end_shape[2], :, :, :, :] = image_out
+    # add the image to the hdf5 file and as every image will be saved into different files remove multiplication with subject_indexes
+    dataset['sliced_images_%s' % validation_dir][0:end_shape[2], :, :, :, :] = image_out
+    
+    '''
+    logging.info("Writing Sliced SegmentedFlowMRI to:' + some_path)
+    sliced_segmented_flowmri = SegmentedFlowMRI(segmentedFlowMRI.geometry,
+                                                segmentedFlowMRI.time, 
+                                                segmentedFlowMRI.time_heart_cycle_period,
+                                                intensity= image_out[:, :, :, :, 0], 
+                                                velocity_mean = image_out[:, :, :, :, 1:3],
+                                                segmentedFlowMRI.velocity_cov,
+                                                segmented_original)
 
+    sliced_segmented_flowmri.write_hdf5("some path")
+    '''
 
     # ==========================================
     # close the hdf5 file
+    # This will be removed after implementing hdf5
     # ==========================================
     hdf5_file.close()
 
@@ -953,23 +1002,24 @@ def prepare_and_write_masked_data_sliced(basepath,
 # ==========================================
 def load_masked_data_sliced(basepath,
               subject_index,
-              train_test,
+              validation_dir,
               force_overwrite=False,
               load_anomalous=False):
 
     # ==========================================
     # define file paths for images and labels
     # ==========================================
+    
     dataset_filepath = basepath + '/masked_sliced_images_from' + str(subject_index)  + '.hdf5'
-
+    
     if not os.path.exists(dataset_filepath) or force_overwrite:
         print('This configuration has not yet been preprocessed.')
         print('Preprocessing now...')
         prepare_and_write_masked_data_sliced(basepath = basepath,
                                filepath_output = dataset_filepath,
-                               subject_index= subject_index,
-                               train_test = train_test,
-                               load_anomalous= load_anomalous)
+                               subject_index = subject_index,
+                               validation_dir = validation_dir,
+                               load_anomalous = load_anomalous)
     else:
         print('Already preprocessed this configuration. Loading now...')
 

@@ -10,6 +10,17 @@ import numpy as np
 import datetime
 import h5py
 
+# ========================================================
+# Adding io interface developed by cscs
+# The method used in segmenter is preserved to find the correct path:
+# Adding the path of the hpc-predict-io/python/ directory to sys.path
+# ========================================================
+import os, sys
+current_dir_path = os.getcwd()
+mr_io_dir_path = current_dir_path[:-25] + 'hpc-predict-io/python/'
+sys.path.append(mr_io_dir_path)
+from mr_io import SegmentedFlowMRI
+
 # =================================================================================
 # ============== IMPORT HELPER FUNCTIONS ==========================================
 # =================================================================================
@@ -130,9 +141,9 @@ if __name__ == "__main__":
         logging.info('============================================================')
         logging.info('Loading data from: ' + project_data_root)
         data_vl = data_freiburg_numpy_to_preprocessed_hdf5.load_masked_data_sliced(basepath = project_data_root,
-                                                        subject_index= subject_index,
-                                                        train_test='validation')
-        images_vl_sl = data_vl['sliced_images_validation']
+                                                        subject_index = subject_index,
+                                                        validation_dir ='validation_with_segmentedFlowMRI')
+        images_vl_sl = data_vl['sliced_images_validation_with_segmentedFlowMRI']
         logging.info('Shape of this image: %s' %str(images_vl_sl.shape)) # expected: [img_size_z*, img_size_x, vol_size_y, img_size_t, n_channels]
         logging.info('============================================================\n')
     
@@ -162,13 +173,18 @@ if __name__ == "__main__":
     # Create the needed directories for evaluation if they do not exist already
     try:
         #output_dir_train = 'Results/Evaluation/' + model_name + '/train'
-        output_dir_validation = 'Results/Evaluation/' + model_name + '/validation'
-
+        #output_dir_validation = 'Results/Evaluation/' + model_name + '/validation'
+        
         #if not os.path.exists(os.path.join(project_code_root, output_dir_train)):
-         #   os.makedirs(os.path.join(project_code_root, output_dir_train))
+        #   os.makedirs(os.path.join(project_code_root, output_dir_train))
 
-        if not os.path.exists(os.path.join(project_code_root, output_dir_validation)):
-            os.makedirs(os.path.join(project_code_root, output_dir_validation))
+        #if not os.path.exists(os.path.join(project_code_root, output_dir_validation)):
+        #    os.makedirs(os.path.join(project_code_root, output_dir_validation))
+        
+        output_segmentedFlowMRI = 'Results/Evaluation/' + model_name + '/validation_segmentedFlowMRI'
+
+        if not os.path.exists(os.path.join(project_code_root, output_segmentedFlowMRI)):
+            os.makedirs(os.path.join(project_code_root, output_segmentedFlowMRI))
 
         if not os.path.exists(os.path.join(project_code_root, 'Results/Evaluation/' + model_name + '/generated')):
             os.makedirs(os.path.join(project_code_root, 'Results/Evaluation/' + model_name + '/generated'))
@@ -214,14 +230,15 @@ if __name__ == "__main__":
     # If option to create a hdf5 file is enabled
     if config["save_hdf5"]:
         if preprocess_enabled == 'masked_slice_anomalous':
-            filepath_output = os.path.join(config["project_data_root"], 'model_reconstructions/' + model_name + '_validation_' + 'anomalous_' + str(subject_index) + '.hdf5')
-        else:    
-            filepath_output = os.path.join(config["project_data_root"], 'model_reconstructions/' + model_name + '_validation_' + str(subject_index) + '.hdf5')
+            filepath_output = os.path.join(config["project_data_root"], 'model_reconstructions/' + model_name + '_validation_segmentedFlowMRI_' + 'anomalous' + str(subject_index) + '.hdf5')
+        else:   
+            filepath_output = os.path.join(config["project_data_root"], 'model_reconstructions/' + model_name + '_validation_segmentedFlowMRI_' + str(subject_index) + '.hdf5')
 
         # create a hdf5 file
         dataset = {}
         hdf5_file = h5py.File(filepath_output, "w")
         dataset['reconstruction'] = hdf5_file.create_dataset("reconstruction", images_vl_sl.shape, dtype='float32')
+        #dataset['reconstruction'] = hdf5_file.create_dataset("reconstruction", shape(images_vl_sl.shape[0], images_vl_sl.shape[1], images_vl_sl.shape[2], images_vl_sl.shape[3], images_vl_sl.shape[4]+1), dtype= 'float32')
 
     # For the selected subject index, grab the full data for that one subject: We only evaluate one data which has information from 0:64 only  
     subject_sliced = images_vl_sl[0:64,:,:,:,:]
@@ -242,11 +259,18 @@ if __name__ == "__main__":
 
         # Visualization
         if config["visualization_mode"] == 'all':
-            out_path = os.path.join(project_code_root,'Results/Evaluation/' + model_name + '/validation/' + 'Subject_' + str(subject_index) + '_' + str(start_idx) + '_' + str(end_idx) + '.png')
+            out_path = os.path.join(project_code_root,'Results/Evaluation/' + model_name + '/validation_segmentedFlowMRI/' + 'Subject_' + str(subject_index) + '_' + str(start_idx) + '_' + str(end_idx) + '.png')
             plot_batch_3d_complete(subject_sliced[start_idx:end_idx], out_mu, every_x_time_step=1, out_path= out_path)
 
         # Save it to the hdf5 file
-        dataset['reconstruction'][start_idx+(subject_index*config["spatial_size_z"]):end_idx+(subject_index*config["spatial_size_z"]), :, :, :, :] = out_mu
+        #If all the subjects are saved into same hdf5 file, then change hdf5 path description and bring the multiplication back.
+        #Not sure if I need to multiple with subject_index here as we are only dealing with one data. So I remove the multiplication for the moment. 
+        print("out_mu shape: ") 
+        print(out_mu.shape)
+        dataset['reconstruction'][start_idx:end_idx, :, :, :, :] = out_mu
+        # dataset['reconstruction'][start_idx:end_idx, :, :, :, 0:3] = out_mu
+        # dataset['reconstruction'][start_idx:end_idx, :, :, :, 4] = segmentation_prob? 
+        # dataset['reconstruction'][start_idx:end_idx, :, :, :, 5] = error
 
         # update vars for next loop
         start_idx += config["batch_size"]
