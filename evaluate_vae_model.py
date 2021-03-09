@@ -29,6 +29,7 @@ from networks.conditional_variational_autoencoder import ConditionalVariationalA
 # ============== IMPORT MODELS ====================================================
 # =================================================================================
 from models.vae import VAEModel
+#Not sure if this is necessary- check this later
 from models.conditional_vae import ConditionalVAEModel
 
 
@@ -39,12 +40,13 @@ if __name__ == "__main__":
 
     # Parse the parameters given
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model_name', type=str, default=0)
+    parser.add_argument('--model_name', required=True, type=str, default=0)
     parser.add_argument("--config", required=True, help="path to config")
     parser.add_argument("--checkpoint", default="logs", help="path to checkpoint to restore")
     parser.add_argument("--train", type=str)
     parser.add_argument("--val", type=str)
-    parser.add_argument("--preprocess", type=str)
+    parser.add_argument("--preprocess", required=True, type=str, help= "method to slice the data")
+    parser.add_argument("--subject_index", required=True, type=int)
 
     parameters = parser.parse_args()
 
@@ -57,6 +59,7 @@ if __name__ == "__main__":
     train_set_name = parameters.train
     val_set_name = parameters.val
     preprocess_enabled = parameters.preprocess
+    subject_index = parameters.subject_index
 
     # ========= TRAINING PARAMETER CONFIGURATION ===========
     epochs = config['lr_decay_end']
@@ -70,7 +73,8 @@ if __name__ == "__main__":
     project_data_root = config["project_data_root"]
     project_code_root = config["project_code_root"]
 
-    log_dir = os.path.join(project_code_root, "logs/" + model_name + 'EVAL' + '_' + "_" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
+    log_dir = os.path.join(project_code_root, "logs/" + model_name + 'EVAL' + '_' + "_")
+    
     try:
         os.mkdir(log_dir)
         logging.info('============================================================')
@@ -124,24 +128,12 @@ if __name__ == "__main__":
     if preprocess_enabled == "masked_slice":
 
         logging.info('============================================================')
-        logging.info('Loading training data from: ' + project_data_root)
-        data_tr = data_freiburg_numpy_to_preprocessed_hdf5.load_masked_data_sliced(basepath = project_data_root,
-                                                        idx_start = config['train_data_start_idx'],
-                                                        idx_end = config['train_data_end_idx'],
-                                                        train_test='train')
-        images_tr_sl = data_tr['sliced_images_train']
-        logging.info(type(images_tr_sl))
-        logging.info('Shape of training images: %s' %str(images_tr_sl.shape)) # expected: [img_size_z*num_images, img_size_x, vol_size_y, img_size_t, n_channels]
-
-
-        logging.info('============================================================')
-        logging.info('Loading validation data from: ' + project_data_root)
+        logging.info('Loading data from: ' + project_data_root)
         data_vl = data_freiburg_numpy_to_preprocessed_hdf5.load_masked_data_sliced(basepath = project_data_root,
-                                                        idx_start = config['validation_data_start_idx'],
-                                                        idx_end = config['validation_data_end_idx'],
+                                                        subject_index= subject_index,
                                                         train_test='validation')
         images_vl_sl = data_vl['sliced_images_validation']
-        logging.info('Shape of validation images: %s' %str(images_vl_sl.shape)) # expected: [img_size_z*num_images, img_size_x, vol_size_y, img_size_t, n_channels]
+        logging.info('Shape of this image: %s' %str(images_vl_sl.shape)) # expected: [img_size_z*, img_size_x, vol_size_y, img_size_t, n_channels]
         logging.info('============================================================\n')
     
     if preprocess_enabled == "masked_slice_anomalous":
@@ -169,11 +161,11 @@ if __name__ == "__main__":
 
     # Create the needed directories for evaluation if they do not exist already
     try:
-        output_dir_train = 'Results/Evaluation/' + model_name + '/train'
+        #output_dir_train = 'Results/Evaluation/' + model_name + '/train'
         output_dir_validation = 'Results/Evaluation/' + model_name + '/validation'
 
-        if not os.path.exists(os.path.join(project_code_root, output_dir_train)):
-            os.makedirs(os.path.join(project_code_root, output_dir_train))
+        #if not os.path.exists(os.path.join(project_code_root, output_dir_train)):
+         #   os.makedirs(os.path.join(project_code_root, output_dir_train))
 
         if not os.path.exists(os.path.join(project_code_root, output_dir_validation)):
             os.makedirs(os.path.join(project_code_root, output_dir_validation))
@@ -200,10 +192,11 @@ if __name__ == "__main__":
     logging.info('')
     logging.info('Evaluation on {} subjects and {} slices'.format(config['subject_mode'],config['slice_mode']))
 
+    #Not be very useful as we will precise subject_index. Remove it later
     if config['subject_mode'] != 'all':
-        logging.info('Custom train subjects: {}'.format(str(config['subjects_train'])))
         logging.info('Custom validation subjects: {}'.format(str(config['subjects_validation'])))
 
+    #Same with slices
     if config['slice_mode'] != 'all':
         logging.info('Custom slices selected: {}'.format(str(config['which_slices'])))
 
@@ -215,108 +208,73 @@ if __name__ == "__main__":
     # ============== RMSE EVALUATION AND VISUAL INSPECTION ============================
     # =================================================================================
 
-    # Loop over the datasets that should be evaluated
-    for which_dataset in config['which_datasets']:
+    # initialize storage array for all the subject RMSEs in the dataset
+    mean_dataset_rmse = []
 
-        logging.info('============ DATASET {} ============='.format(which_dataset))
+    # If option to create a hdf5 file is enabled
+    if config["save_hdf5"]:
+        if preprocess_enabled == 'masked_slice_anomalous':
+            filepath_output = os.path.join(config["project_data_root"], 'model_reconstructions/' + model_name + '_validation_' + 'anomalous_' + str(subject_index) + '.hdf5')
+        else:    
+            filepath_output = os.path.join(config["project_data_root"], 'model_reconstructions/' + model_name + '_validation_' + str(subject_index) + '.hdf5')
 
-        # initialize storage array for all the subject RMSEs in the dataset
-        mean_dataset_rmse = []
+        # create a hdf5 file
+        dataset = {}
+        hdf5_file = h5py.File(filepath_output, "w")
+        dataset['reconstruction'] = hdf5_file.create_dataset("reconstruction", images_vl_sl.shape, dtype='float32')
 
-        # Select the subjects, either all or custom selection of subjects
-        if config['subject_mode'] == 'all':
-            if which_dataset == 'train':
-                subject_indexes = range(config['train_data_end_idx']+1)
+    # For the selected subject index, grab the full data for that one subject: We only evaluate one data which has information from 0:64 only  
+    subject_sliced = images_vl_sl[0:64,:,:,:,:]
 
-            elif which_dataset == 'validation':
-                subject_indexes = range(config['validation_data_end_idx'] - config['validation_data_start_idx'] + 1)
+    # Initialize the while loop variables
+    start_idx = 0
+    end_idx = config["batch_size"]
+    subject_rmse = []
 
-        else:
-            if which_dataset == 'train':
-                subject_indexes = config['subjects_train']
+    while end_idx <= config["spatial_size_z"]:
+        # Selected slices for batch and run through the model
+        feed_dict = {model.image_matrix: subject_sliced[start_idx:end_idx]}
+        out_mu = model.sess.run(model.decoder_output, feed_dict)
 
-            elif which_dataset == 'validation':
-                subject_indexes = config['subjects_validation']
+        # Compute rmse of these slices and append it to the subject error
+        error = rmse(subject_sliced[start_idx:end_idx], out_mu)
+        subject_rmse.append(error)
 
-        # If option to create a hdf5 file is enabled
-        if config["save_hdf5"]:
+        # Visualization
+        if config["visualization_mode"] == 'all':
+            out_path = os.path.join(project_code_root,'Results/Evaluation/' + model_name + '/validation/' + 'Subject_' + str(subject_index) + '_' + str(start_idx) + '_' + str(end_idx) + '.png')
+            plot_batch_3d_complete(subject_sliced[start_idx:end_idx], out_mu, every_x_time_step=1, out_path= out_path)
 
-            if which_dataset == 'train':
-                filepath_output = os.path.join(config["project_data_root"], 'model_reconstructions/' + model_name + '_' + which_dataset + '_' + str(config['train_data_start_idx']) + 'to' + str(config['train_data_end_idx']) + '.hdf5')
+        # Save it to the hdf5 file
+        dataset['reconstruction'][start_idx+(subject_index*config["spatial_size_z"]):end_idx+(subject_index*config["spatial_size_z"]), :, :, :, :] = out_mu
 
-            elif which_dataset == 'validation':
-                if preprocess_enabled == 'masked_slice_anomalous':
-                    filepath_output = os.path.join(config["project_data_root"], 'model_reconstructions/' + model_name + '_' + which_dataset + '_' + 'anomalous_' + str(config['validation_data_start_idx']) + 'to' + str(config['validation_data_end_idx']) + '.hdf5')
-                else:    
-                    filepath_output = os.path.join(config["project_data_root"], 'model_reconstructions/' + model_name + '_' + which_dataset + '_' + str(config['validation_data_start_idx']) + 'to' + str(config['validation_data_end_idx']) + '.hdf5')
+        # update vars for next loop
+        start_idx += config["batch_size"]
+        end_idx += config["batch_size"]
 
-            # create a hdf5 file
-            dataset = {}
-            hdf5_file = h5py.File(filepath_output, "w")
-            dataset['reconstruction'] = hdf5_file.create_dataset("reconstruction", images_vl_sl.shape, dtype='float32')
+    # Now that we have the rmse of the different slices, compute total RMSE and stdev for this subject
+    to_numpy = np.array(subject_rmse)
+    mean_subject_rmse = np.mean(to_numpy)
 
+    # Append it to the dataset rmse
+    mean_dataset_rmse.append(mean_subject_rmse)
 
-        # Loop over the selected subject indexes
-        for i in subject_indexes:
+    # Compute stdev
+    std_subject_rmse = np.std(to_numpy)
 
-            # grab the full data for that one subject
-            if which_dataset == 'train':
-                subject_sliced = images_tr_sl[i*64:(i+1)*64,:,:,:,:]
+    logging.info('RMSE: Subject {} from validation ; {} ; {}'.format(subject_index, mean_subject_rmse, std_subject_rmse))
 
-            elif which_dataset == 'validation':
-                subject_sliced = images_vl_sl[i*64:(i+1)*64,:,:,:,:]
+    # end of for loop over subjects
 
+    to_numpy = np.array(mean_dataset_rmse)
+    total_mean_dataset_rmse = np.mean(to_numpy)
+    total_std_dataset_rmse = np.std(to_numpy)
 
-            # Initialize the while loop variables
-            start_idx = 0
-            end_idx = config["batch_size"]
-            subject_rmse = []
+    logging.info('==== TOTAL MEAN RMSE ====: {}'.format(total_mean_dataset_rmse))
+    logging.info('==== TOTAL STD RMSE  ====: {}'.format(total_std_dataset_rmse))
 
-            while end_idx <= config["spatial_size_z"]:
-
-                # Selected slices for batch and run through the model
-                feed_dict = {model.image_matrix: subject_sliced[start_idx:end_idx]}
-                out_mu = model.sess.run(model.decoder_output, feed_dict)
-
-                # Compute rmse of these slices and append it to the subject error
-                error = rmse(subject_sliced[start_idx:end_idx], out_mu)
-                subject_rmse.append(error)
-
-                # Visualization
-                if config["visualization_mode"] == 'all':
-                    out_path = os.path.join(project_code_root,'Results/Evaluation/' + model_name + '/' + which_dataset + '/' + 'Subject_' + str(i) + '_' + str(start_idx) + '_' + str(end_idx) + '.png')
-                    plot_batch_3d_complete(subject_sliced[start_idx:end_idx], out_mu, every_x_time_step=1, out_path= out_path)
-
-                # Save it to the hdf5 file
-                dataset['reconstruction'][start_idx+(i*config["spatial_size_z"]):end_idx+(i*config["spatial_size_z"]), :, :, :, :] = out_mu
-
-                # update vars for next loop
-                start_idx += config["batch_size"]
-                end_idx += config["batch_size"]
-
-            # Now that we have the rmse of the different slices, compute total RMSE and stdev for this subject
-            to_numpy = np.array(subject_rmse)
-            mean_subject_rmse = np.mean(to_numpy)
-
-            # Append it to the dataset rmse
-            mean_dataset_rmse.append(mean_subject_rmse)
-
-            # Compute stdev
-            std_subject_rmse = np.std(to_numpy)
-
-            logging.info('RMSE: Subject {} from {} ; {} ; {}'.format(i, which_dataset, mean_subject_rmse, std_subject_rmse))
-
-        # end of for loop over subjects
-
-        to_numpy = np.array(mean_dataset_rmse)
-        total_mean_dataset_rmse = np.mean(to_numpy)
-        total_std_dataset_rmse = np.std(to_numpy)
-
-        logging.info('==== TOTAL MEAN RMSE ====: {}'.format(total_mean_dataset_rmse))
-        logging.info('==== TOTAL STD RMSE  ====: {}'.format(total_std_dataset_rmse))
-
-        hdf5_file.close()
-        logging.info('=================================\n')
+    hdf5_file.close()
+    logging.info('=================================\n')
 
     # end of for loop over data_sets
 

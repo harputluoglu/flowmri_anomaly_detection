@@ -8,7 +8,8 @@ import dataset_processing.data_freiburg_subject_ordering as subjects_ordering
 import dataset_processing.config.system as sys_config
 from scipy.ndimage import gaussian_filter
 
-
+import logging
+#SimpleITK Version 1.2.0 is used in this project
 import SimpleITK as sitk
 import math
 from scipy import interpolate
@@ -170,16 +171,30 @@ def extract_slice_from_sitk_image(sitk_image, point, Z, X, new_size, fill_value=
     phys_size = new_size * orig_spacing
     new_origin = rotation_center - phys_size / 2
 
+    '''resample_filter = sitk.ResampleImageFilter()
+    resample_filter.SetSize(new_size)
+    resample_filter.SetTransform(transform)
+    resample_filter.SetOutputOrigin(new_origin)
+    resample_filter.SetOutputSpacing(orig_spacing)
+    resample_filter.SetDefaultPixelValue(fill_value)
+    resample_filter.SetOutputDirection(orig_direction)
+    resample_filter.SetInterpolator(sitk.sitkLinear)
+    resample_filter.SetReferenceImage(sitk_image)
+    resample_filter.SetOutputPixelType(orig_pixelid)
+    print('Resampling...')
+    resampled_sitk_image = resample_filter.Execute(sitk_image)
+    print('Resampled')
+    '''
     resample_filter = sitk.ResampleImageFilter()
     resampled_sitk_image = resample_filter.Execute(sitk_image,
-                                                   new_size,
-                                                   transform,
-                                                   sitk.sitkLinear,
-                                                   new_origin,
-                                                   orig_spacing,
-                                                   orig_direction,
-                                                   fill_value,
-                                                   orig_pixelid)
+                                                    new_size,
+                                                    transform, 
+                                                    sitk.sitkLinear,
+                                                    new_origin,
+                                                    orig_spacing,
+                                                    orig_direction,
+                                                    fill_value,
+                                                    orig_pixelid)
     return resampled_sitk_image
 
 
@@ -208,10 +223,14 @@ def interpolate_and_slice(image,
     direc = np.array(sitk_image.GetDirection()[3:6])
 
     slices = []
+    
     for i in range(len(Zs)):
         # I define the x'-vector as the projection of the y-vector onto the plane perpendicular to the spline
         xs = (direc - np.dot(direc, Zs[i]) / (np.power(np.linalg.norm(Zs[i]), 2)) * Zs[i])
-        sitk_slice = extract_slice_from_sitk_image(sitk_image, points[i], Zs[i], xs, list(size[:2]) + [1], fill_value=0)
+        #logging.info('Shape of sitk_image: %s' %str(sitk_image.shape))
+        #logging.info('Shape of Zs: %s' %str(Zs.shape))
+        #logging.info('Shape of points: %s' %str(points.shape))
+        sitk_slice = extract_slice_from_sitk_image(sitk_image, points[i], Zs[i], xs, list(size[:2]) + [1], fill_value=0) 
         np_image = sitk.GetArrayFromImage(sitk_slice).transpose(2, 1, 0)
         slices.append(np_image)
 
@@ -802,8 +821,7 @@ def load_masked_data(basepath,
 #====================================================================================
 def prepare_and_write_masked_data_sliced(basepath,
                            filepath_output,
-                           idx_start,
-                           idx_end,
+                           subject_index,
                            train_test,
                            load_anomalous=False):
 
@@ -820,14 +838,10 @@ def prepare_and_write_masked_data_sliced(basepath,
     # (not required, but this makes it nice while training CNNs)
 
     # ==========================================
-    # ==========================================
-    num_images_to_load = idx_end + 1 - idx_start
-
-    # ==========================================
     # we will stack all images along their z-axis
     # --> the network will analyze (x,y,t) volumes, with z-samples being treated independently.
     # ==========================================
-    images_dataset_shape = [end_shape[2]*num_images_to_load,
+    images_dataset_shape = [end_shape[2],
                             end_shape[0],
                             end_shape[1],
                             end_shape[3],
@@ -845,96 +859,88 @@ def prepare_and_write_masked_data_sliced(basepath,
     dataset['sliced_images_%s' % train_test] = hdf5_file.create_dataset("sliced_images_%s" % train_test, images_dataset_shape, dtype='float32')
     #dataset['labels_%s' % train_test] = hdf5_file.create_dataset("labels_%s" % train_test, labels_dataset_shape, dtype='uint8')
 
-    i = 0
-    for n in range(idx_start, idx_end + 1):
+    # load the segmentation that was created with Nicolas's tool
+    if load_anomalous:
+        image = np.load(basepath + '/' + 'anomalous_subject' + '/image.npy')
+        segmented_original = np.load(basepath + '/' + 'anomalous_subject' + '/random_walker_prediction.npy')
+    else:
+        image = np.load(basepath + '/' + subjects_ordering.SUBJECT_DIRS[subject_index] + '/image.npy')
+        segmented_original = np.load(basepath + '/' + subjects_ordering.SUBJECT_DIRS[subject_index] + '/random_walker_prediction.npy')
 
-        print('loading subject ' + str(n-idx_start+1) + ' out of ' + str(num_images_to_load) + '...')
+    # Enlarge the segmentation slightly to be sure that there are no cutoffs of the aorta
+    time_steps = segmented_original.shape[3]
+    segmented = dilation(segmented_original[:,:,:,7], cube(3))
 
-        # load the segmentation that was created with Nicolas's tool
-        if load_anomalous:
-            image = np.load(basepath + '/' + 'anomalous_subject' + '/image.npy')
-            segmented_original = np.load(basepath + '/' + 'anomalous_subject' + '/random_walker_prediction.npy')
-        else:
-            image = np.load(basepath + '/' + subjects_ordering.SUBJECT_DIRS[n] + '/image.npy')
-            segmented_original = np.load(basepath + '/' + subjects_ordering.SUBJECT_DIRS[n] + '/random_walker_prediction.npy')
-        
+    temp_for_stack = [segmented for i in range(time_steps)]
+    segmented = np.stack(temp_for_stack, axis=3)
 
-        # Enlarge the segmentation slightly to be sure that there are no cutoffs of the aorta
-        time_steps = segmented_original.shape[3]
-        segmented = dilation(segmented_original[:,:,:,7], cube(3))
+    # normalize image to -1 to 1
+    image = normalize_image(image)
 
-        temp_for_stack = [segmented for i in range(time_steps)]
-        segmented = np.stack(temp_for_stack, axis=3)
+    temp_images_intensity = image[:,:,:,:,0] * segmented # change these back if it works
+    temp_images_vx = image[:,:,:,:,1] * segmented
+    temp_images_vy = image[:,:,:,:,2] * segmented
+    temp_images_vz = image[:,:,:,:,3] * segmented
 
-        # normalize image to -1 to 1
-        image = normalize_image(image)
-
-        temp_images_intensity = image[:,:,:,:,0] * segmented # change these back if it works
-        temp_images_vx = image[:,:,:,:,1] * segmented
-        temp_images_vy = image[:,:,:,:,2] * segmented
-        temp_images_vz = image[:,:,:,:,3] * segmented
-
-        # recombine the images
-        image = np.stack([temp_images_intensity,temp_images_vx,temp_images_vy,temp_images_vz], axis=4)
+    # recombine the images
+    image = np.stack([temp_images_intensity,temp_images_vx,temp_images_vy,temp_images_vz], axis=4)
 
 
-        # Average the segmentation over time (the geometry should be the same over time)
-        avg = np.average(segmented_original, axis = 3)
+    # Average the segmentation over time (the geometry should be the same over time)
+    avg = np.average(segmented_original, axis = 3)
 
-        # Compute the centerline points of the skeleton
-        skeleton = skeletonize_3d(avg[:,:,:])
+    # Compute the centerline points of the skeleton
+    skeleton = skeletonize_3d(avg[:,:,:])
 
-        # Get the points of the centerline as an array
-        points = np.array(np.where(skeleton != 0)).transpose([1,0])
+    # Get the points of the centerline as an array
+    points = np.array(np.where(skeleton != 0)).transpose([1,0])
 
-        print(points)
+    print(points)
 
-        # Limit to sectors where ascending aorta is located
-        points = points[np.where(points[:,1]<60)]
-        points = points[np.where(points[:,0]<100)]
+    # Limit to sectors where ascending aorta is located
+    points = points[np.where(points[:,1]<60)]
+    points = points[np.where(points[:,0]<100)]
 
-        # Order the points in ascending order with x
-        points = points[points[:,0].argsort()[::-1]]
+    # Order the points in ascending order with x
+    points = points[points[:,0].argsort()[::-1]]
 
-        temp = []
-        for index, element in enumerate(points[5:]):
-            if (index%5)==0:
-                temp.append(element)
+    temp = []
+    for index, element in enumerate(points[5:]):
+        if (index%5)==0:
+            temp.append(element)
 
-        coords = np.array(temp)
-        print(coords)
+    coords = np.array(temp)
+    print(coords)
 
-        #===========================================================================================
-        # Parameters for the interpolation and creation of the files
+    #===========================================================================================
+    # Parameters for the interpolation and creation of the files
 
-        # We create Slices across time and channels in a double for loop
-        temp_for_channel_stacking = []
-        for channel in range(image.shape[4]):
+    # We create Slices across time and channels in a double for loop
+    temp_for_channel_stacking = []
+    for channel in range(image.shape[4]):
 
-            temp_for_time_stacking = []
-            for t in range(image.shape[3]):
-                straightened = interpolate_and_slice(image[:,:,:,t,channel], coords, common_image_shape)
-                temp_for_time_stacking.append(straightened)
+        temp_for_time_stacking = []
+        for t in range(image.shape[3]):
+            straightened = interpolate_and_slice(image[:,:,:,t,channel], coords, common_image_shape)
+            temp_for_time_stacking.append(straightened)
 
-            channel_stacked = np.stack(temp_for_time_stacking, axis=-1)
-            temp_for_channel_stacking.append(channel_stacked)
+        channel_stacked = np.stack(temp_for_time_stacking, axis=-1)
+        temp_for_channel_stacking.append(channel_stacked)
 
-        straightened = np.stack(temp_for_channel_stacking, axis=-1)
-        image_out = straightened
+    straightened = np.stack(temp_for_channel_stacking, axis=-1)
+    image_out = straightened
 
-        # make all images of the same shape
-        print("Image shape before cropping and padding:" + str(image_out.shape))
-        image_out = crop_or_pad_zeros(image_out, end_shape)
-        print("Image shape after cropping and padding:" + str(image_out.shape))
+    # make all images of the same shape
+    print("Image shape before cropping and padding:" + str(image_out.shape))
+    image_out = crop_or_pad_zeros(image_out, end_shape)
+    print("Image shape after cropping and padding:" + str(image_out.shape))
 
-        # move the z-axis to the front, as we want to stack the data along this axis
-        image_out = np.moveaxis(image_out, 2, 0)
+    # move the z-axis to the front, as we want to stack the data along this axis
+    image_out = np.moveaxis(image_out, 2, 0)
 
-        # add the image to the hdf5 file
-        dataset['sliced_images_%s' % train_test][i*end_shape[2]:(i+1)*end_shape[2], :, :, :, :] = image_out
+    # add the image to the hdf5 file
+    dataset['sliced_images_%s' % train_test][subject_index*end_shape[2]:(subject_index+1)*end_shape[2], :, :, :, :] = image_out
 
-        # increment the index being used to write in the hdf5 datasets
-        i = i + 1
 
     # ==========================================
     # close the hdf5 file
@@ -946,8 +952,7 @@ def prepare_and_write_masked_data_sliced(basepath,
 # ==========================================
 # ==========================================
 def load_masked_data_sliced(basepath,
-              idx_start,
-              idx_end,
+              subject_index,
               train_test,
               force_overwrite=False,
               load_anomalous=False):
@@ -955,15 +960,14 @@ def load_masked_data_sliced(basepath,
     # ==========================================
     # define file paths for images and labels
     # ==========================================
-    dataset_filepath = basepath + '/masked_sliced_images_from' + str(idx_start) + 'to' + str(idx_end) + '.hdf5'
+    dataset_filepath = basepath + '/masked_sliced_images_from' + str(subject_index)  + '.hdf5'
 
     if not os.path.exists(dataset_filepath) or force_overwrite:
         print('This configuration has not yet been preprocessed.')
         print('Preprocessing now...')
         prepare_and_write_masked_data_sliced(basepath = basepath,
                                filepath_output = dataset_filepath,
-                               idx_start = idx_start,
-                               idx_end = idx_end,
+                               subject_index= subject_index,
                                train_test = train_test,
                                load_anomalous= load_anomalous)
     else:
