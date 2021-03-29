@@ -867,7 +867,8 @@ def prepare_and_write_masked_data_sliced(basepath,
     # ==========================================
     dataset['sliced_images_%s' % validation_dir] = hdf5_file.create_dataset("sliced_images_%s" % validation_dir, images_dataset_shape, dtype='float32')
     #dataset['labels_%s' % train_test] = hdf5_file.create_dataset("labels_%s" % train_test, labels_dataset_shape, dtype='uint8')
-    ''' 
+   
+    '''  
     # load the segmentation that was created with Nicolas's tool
     if load_anomalous:
         image = np.load(basepath + '/' + 'anomalous_subject' + '/image.npy')
@@ -881,8 +882,10 @@ def prepare_and_write_masked_data_sliced(basepath,
     print(image.shape)
     print('segmented_original:')
     print(segmented_original.shape)
-    #HCP-PREDICT-IO as following:
-    '''     
+    '''
+
+
+    #HCP-PREDICT-IO for reading the data is started here: 
     segmentedFlowMRI= SegmentedFlowMRI.read_hdf5('/scratch/hharputlu/download.hdf5')
 
     image_intensity = segmentedFlowMRI.intensity
@@ -895,7 +898,7 @@ def prepare_and_write_masked_data_sliced(basepath,
     
     segmented_original = segmentedFlowMRI.segmentation_prob
     logging.info('Segmented_original: {} '.format(segmented_original.shape))
-    
+    #HPC-PREDICT-IO for reading the data is finished here
     
     # Enlarge the segmentation slightly to be sure that there are no cutoffs of the aorta
     time_steps = segmented_original.shape[3]
